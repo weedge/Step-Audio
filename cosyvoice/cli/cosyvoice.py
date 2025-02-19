@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import os
+import threading
 import uuid
 import time
 from tqdm import tqdm
@@ -23,7 +24,6 @@ from cosyvoice.cli.model import CosyVoiceModel
 
 
 class CosyVoice:
-
     def __init__(
         self,
         model_dir,
@@ -55,9 +55,7 @@ class CosyVoice:
     ):
         tts_mel = self.model.flow.inference(
             token=speech_token.to(self.model.device),
-            token_len=torch.tensor([speech_token.size(1)], dtype=torch.int32).to(
-                self.model.device
-            ),
+            token_len=torch.tensor([speech_token.size(1)], dtype=torch.int32).to(self.model.device),
             prompt_token=prompt_token.to(self.model.device),
             prompt_token_len=prompt_token_len.to(self.model.device),
             prompt_feat=speech_feat.to(self.model.device),
