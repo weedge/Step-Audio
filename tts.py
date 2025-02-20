@@ -309,7 +309,7 @@ class StepAudioTTS:
                     prompt_speaker_info["cosy_prompt_token_len"],
                     prompt_speaker_info["cosy_speech_embedding"].to(torch.bfloat16),
                 )
-                yield {"tts_speech": sub_tts_speech}
+                yield {"tts_speech": sub_tts_speech, "sample_rate": 22050}
                 with self.session_lm_generat_lock:
                     self.session_lm_generated_ids[session_id] = []
 
@@ -326,7 +326,7 @@ class StepAudioTTS:
                 prompt_speaker_info["cosy_prompt_token_len"],
                 prompt_speaker_info["cosy_speech_embedding"].to(torch.bfloat16),
             )
-            yield {"tts_speech": sub_tts_speech}
+            yield {"tts_speech": sub_tts_speech, "sample_rate": 22050}
 
         with self.lock:
             self.session_lm_generated_ids.pop(session_id)
