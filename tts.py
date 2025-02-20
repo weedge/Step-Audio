@@ -62,7 +62,7 @@ class StepAudioTTS:
         }
         self.register_speakers()
 
-        self.streamer = TokenStreamer
+        self.streamer = TokenStreamer(skip_prompt=True)
         assert (
             stream_factor >= 2
         ), "stream_factor must >=2 increase for better speech quality, but rft slow (speech quality vs rft)"
@@ -290,7 +290,7 @@ class StepAudioTTS:
 
         batch_size = math.ceil(self.stream_factor * cosy_model.model.flow.input_frame_rate)
         for token_id in self.streamer:
-            # print(token_id, end=",", flush=True)
+            print(token_id, end=",", flush=True)
             if token_id == 3:  # skip <|EOT|>, break
                 break
             self.session_lm_generated_ids[session_id].append(token_id)
@@ -298,10 +298,10 @@ class StepAudioTTS:
                 batch = (
                     torch.tensor(self.session_lm_generated_ids[session_id])
                     .unsqueeze(0)
-                    .to(self.device)
+                    .to(cosy_model.model.device)
                 )  # [T] -> [1,T]
                 # Process each batch
-                sub_tts_speech = self.common_cosy_model.token_to_wav_offline(
+                sub_tts_speech = cosy_model.token_to_wav_offline(
                     batch,
                     prompt_speaker_info["cosy_speech_feat"].to(torch.bfloat16),
                     prompt_speaker_info["cosy_speech_feat_len"],
@@ -315,10 +315,12 @@ class StepAudioTTS:
 
         if len(self.session_lm_generated_ids[session_id]) > 0:
             batch = (
-                torch.tensor(self.session_lm_generated_ids[session_id]).unsqueeze(0).to(self.device)
+                torch.tensor(self.session_lm_generated_ids[session_id])
+                .unsqueeze(0)
+                .to(cosy_model.model.device)
             )  # [T] -> [1,T]
             # Process each batch
-            sub_tts_speech = self.common_cosy_model.token_to_wav_offline(
+            sub_tts_speech = cosy_model.token_to_wav_offline(
                 batch,
                 prompt_speaker_info["cosy_speech_feat"].to(torch.bfloat16),
                 prompt_speaker_info["cosy_speech_feat_len"],
