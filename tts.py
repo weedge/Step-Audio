@@ -43,6 +43,17 @@ class StepAudioTTS:
         stream_factor: int = 2,
         **kwargs,
     ):
+        # fast path to check params
+        assert (
+            stream_factor >= 2
+        ), "stream_factor must >=2 increase for better speech quality, but rft slow (speech quality vs rft)"
+        self.stream_factor = stream_factor  # >=2 increase for better speech quality, but rft slow (speech quality vs rft)
+        self.streamer = TokenStreamer(skip_prompt=True)
+
+        # session ctx dict with lock, maybe need a session class
+        self.session_lm_generat_lock = Lock()
+        self.session_lm_generated_ids = {}  # session_id: ids(ptr)
+
         self.llm = AutoModelForCausalLM.from_pretrained(
             model_path,
             torch_dtype=torch.bfloat16,
@@ -61,16 +72,6 @@ class StepAudioTTS:
             "sys_prompt_with_spk": '作为一名卓越的声优演员，你的任务是根据文本中（）或()括号内标注的情感、语种或方言、音乐哼唱、语音调整等标签，以丰富细腻的情感和自然顺畅的语调来朗读文本。\n# 情感标签涵盖了多种情绪状态，包括但不限于：\n- "高兴1"\n- "高兴2"\n- "生气1"\n- "生气2"\n- "悲伤1"\n- "撒娇1"\n\n# 语种或方言标签包含多种语言或方言，包括但不限于：\n- "中文"\n- "英文"\n- "韩语"\n- "日语"\n- "四川话"\n- "粤语"\n- "广东话"\n\n# 音乐哼唱标签包含多种类型歌曲哼唱，包括但不限于：\n- "RAP"\n- "哼唱"\n\n# 语音调整标签，包括但不限于：\n- "慢速1"\n- "慢速2"\n- "快速1"\n- "快速2"\n\n请在朗读时，使用[{}]的声音，根据这些情感标签的指示，调整你的情感、语气、语调和哼唱节奏，以确保文本的情感和意义得到准确而生动的传达，如果没有()或（）括号，则根据文本语义内容自由演绎。',
         }
         self.register_speakers()
-
-        self.streamer = TokenStreamer(skip_prompt=True)
-        assert (
-            stream_factor >= 2
-        ), "stream_factor must >=2 increase for better speech quality, but rft slow (speech quality vs rft)"
-        self.stream_factor = stream_factor  # >=2 increase for better speech quality, but rft slow (speech quality vs rft)
-
-        # session ctx dict with lock, maybe need a session class
-        self.session_lm_generat_lock = Lock()
-        self.session_lm_generated_ids = {}  # session_id: ids(ptr)
 
     def __call__(self, text: str, prompt_speaker: str, clone_dict: dict | None = None):
         prompt_speaker, prompt_speaker_info, cosy_model = self.preprocess_promt(

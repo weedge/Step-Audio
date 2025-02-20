@@ -30,7 +30,11 @@ def main():
     os.makedirs(f"{args.output_path}", exist_ok=True)
 
     encoder = StepAudioTokenizer(f"{args.model_path}/Step-Audio-Tokenizer")
-    tts_engine = StepAudioTTS(f"{args.model_path}/Step-Audio-TTS-3B", encoder)
+    tts_engine = StepAudioTTS(
+        f"{args.model_path}/Step-Audio-TTS-3B",
+        encoder,
+        stream_factor=args.stream_factor,
+    )
 
     if args.synthesis_type == "tts":
         text = "（RAP）君不见黄河之水天上来，奔流到海不复回。君不见高堂明镜悲白发，朝如青丝暮成雪。人生得意须尽欢，莫使金樽空对月。天生我材必有用，千金散尽还复来。"
