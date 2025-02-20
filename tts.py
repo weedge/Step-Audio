@@ -74,7 +74,7 @@ class StepAudioTTS:
         self.register_speakers()
 
     def __call__(self, text: str, prompt_speaker: str, clone_dict: dict | None = None):
-        prompt_speaker, prompt_speaker_info, cosy_model = self.preprocess_promt(
+        prompt_speaker, prompt_speaker_info, cosy_model = self.preprocess_prompt(
             text, prompt_speaker, clone_dict=clone_dict
         )
 
@@ -215,7 +215,7 @@ class StepAudioTTS:
             speech_embedding,
         )
 
-    def preprocess_promt(self, text: str, prompt_speaker: str, clone_dict: dict | None = None):
+    def preprocess_prompt(self, text: str, prompt_speaker: str, clone_dict: dict | None = None):
         if clone_dict:
             (
                 clone_prompt_code,
@@ -261,7 +261,7 @@ class StepAudioTTS:
             - flow: audio vq tokens to mel
             - hifi: mel to waveform
         """
-        prompt_speaker, prompt_speaker_info, cosy_model = self.preprocess_promt(
+        prompt_speaker, prompt_speaker_info, cosy_model = self.preprocess_prompt(
             text, prompt_speaker, clone_dict=clone_dict
         )
         output_audio_sample_rate = cosy_model.model.hift.sampling_rate
