@@ -39,8 +39,8 @@ class StepAudioTTS:
         self,
         model_path,
         encoder,
-        device_map=None,
-        stream_factor=2,
+        device_map: str | dict | None = None,
+        stream_factor: int = 2,
         **kwargs,
     ):
         self.llm = AutoModelForCausalLM.from_pretrained(
@@ -263,6 +263,7 @@ class StepAudioTTS:
         prompt_speaker, prompt_speaker_info, cosy_model = self.preprocess_promt(
             text, prompt_speaker, clone_dict=clone_dict
         )
+        output_audio_sample_rate = cosy_model.model.hift.sampling_rate
 
         token_ids = self.tokenize(
             text,
@@ -310,7 +311,7 @@ class StepAudioTTS:
                     prompt_speaker_info["cosy_prompt_token_len"],
                     prompt_speaker_info["cosy_speech_embedding"].to(torch.bfloat16),
                 )
-                yield {"tts_speech": sub_tts_speech, "sample_rate": 22050}
+                yield {"tts_speech": sub_tts_speech, "sample_rate": output_audio_sample_rate}
                 with self.session_lm_generat_lock:
                     self.session_lm_generated_ids[session_id] = []
 
@@ -330,7 +331,7 @@ class StepAudioTTS:
                 prompt_speaker_info["cosy_prompt_token_len"],
                 prompt_speaker_info["cosy_speech_embedding"].to(torch.bfloat16),
             )
-            yield {"tts_speech": sub_tts_speech, "sample_rate": 22050}
+            yield {"tts_speech": sub_tts_speech, "sample_rate": output_audio_sample_rate}
 
         with self.session_lm_generat_lock:
             self.session_lm_generated_ids.pop(session_id)

@@ -1,9 +1,14 @@
-import torchaudio
+import os
 import argparse
-from tts import StepAudioTTS
+from dotenv import load_dotenv
+
+import torchaudio
+
 from tokenizer import StepAudioTokenizer
 from utils import merge_tensors
-import os
+from tts import StepAudioTTS
+
+load_dotenv(override=True)
 
 
 def main():
@@ -16,7 +21,10 @@ def main():
         "--output-path", type=str, required=True, help="Output path for synthesis audios"
     )
     parser.add_argument(
-        "--stream", type=str, default="static_batch", help="synthesis audios with streaming"
+        "--stream", type=str, default="static_batch", help="Synthesis audios with streaming"
+    )
+    parser.add_argument(
+        "--stream_factor", type=int, default=2, help="Synthesis audios stream factor"
     )
     args = parser.parse_args()
     os.makedirs(f"{args.output_path}", exist_ok=True)
@@ -26,6 +34,7 @@ def main():
 
     if args.synthesis_type == "tts":
         text = "（RAP）君不见黄河之水天上来，奔流到海不复回。君不见高堂明镜悲白发，朝如青丝暮成雪。人生得意须尽欢，莫使金樽空对月。天生我材必有用，千金散尽还复来。"
+        text = os.getenv("TTS_TEXT", text)
         batch_stream = tts_engine.static_batch_stream(text, "Tingting")
         sub_tts_speechs = []
         sr = 22050
@@ -41,6 +50,7 @@ def main():
             "wav_path": "examples/prompt_wav_yuqian.wav",
         }
         text_clone = "万物之始,大道至简,衍化至繁。君不见黄河之水天上来，奔流到海不复回。君不见高堂明镜悲白发，朝如青丝暮成雪。人生得意须尽欢，莫使金樽空对月。天生我材必有用，千金散尽还复来。"
+        text_clone = os.getenv("TTS_TEXT", text_clone)
         batch_stream = tts_engine.static_batch_stream(text_clone, "", clone_speaker)
         sub_tts_speechs = []
         sr = 22050
