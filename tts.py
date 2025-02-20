@@ -1,6 +1,10 @@
+import math
 import os
 import re
 import json
+from threading import Thread, Lock
+import uuid
+
 
 import torchaudio
 import torch
@@ -9,6 +13,7 @@ from transformers.generation.logits_process import LogitsProcessor
 from transformers.generation.utils import LogitsProcessorList
 
 from cosyvoice.cli.cosyvoice import CosyVoice
+from streamer import TokenStreamer
 
 
 class RepetitionAwareLogitsProcessor(LogitsProcessor):
@@ -34,12 +39,27 @@ class StepAudioTTS:
         self,
         model_path,
         encoder,
+        device_map: str | dict | None = None,
+        stream_factor: int = 2,
+        **kwargs,
     ):
+        # fast path to check params
+        assert (
+            stream_factor >= 2
+        ), "stream_factor must >=2 increase for better speech quality, but rft slow (speech quality vs rft)"
+        self.stream_factor = stream_factor  # >=2 increase for better speech quality, but rft slow (speech quality vs rft)
+        self.streamer = TokenStreamer(skip_prompt=True)
+
+        # session ctx dict with lock, maybe need a session class
+        self.session_lm_generat_lock = Lock()
+        self.session_lm_generated_ids = {}  # session_id: ids(ptr)
+
         self.llm = AutoModelForCausalLM.from_pretrained(
             model_path,
             torch_dtype=torch.bfloat16,
-            device_map="cuda",
+            device_map="cuda" if not device_map else device_map,
             trust_remote_code=True,
+            **kwargs,
         )
         self.tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
         self.common_cosy_model = CosyVoice(os.path.join(model_path, "CosyVoice-300M-25Hz"))
@@ -54,7 +74,7 @@ class StepAudioTTS:
         self.register_speakers()
 
     def __call__(self, text: str, prompt_speaker: str, clone_dict: dict | None = None):
-        prompt_speaker_info, prompt_speaker, cosy_model = self.prepare_prompt(
+        prompt_speaker, prompt_speaker_info, cosy_model = self.preprocess_promt(
             text, prompt_speaker, clone_dict=clone_dict
         )
 
@@ -168,7 +188,8 @@ class StepAudioTTS:
 
     def preprocess_prompt_wav(self, prompt_wav_path: str):
         prompt_wav, prompt_wav_sr = torchaudio.load(prompt_wav_path)
-
+        if prompt_wav.shape[0] > 1:
+            prompt_wav = prompt_wav.mean(dim=0, keepdim=True)  # 将多通道音频转换为单通道
         prompt_wav_16k = torchaudio.transforms.Resample(orig_freq=prompt_wav_sr, new_freq=16000)(
             prompt_wav
         )
@@ -194,7 +215,7 @@ class StepAudioTTS:
             speech_embedding,
         )
 
-    def prepare_prompt(self, text: str, prompt_speaker: str, clone_dict: dict | None = None):
+    def preprocess_promt(self, text: str, prompt_speaker: str, clone_dict: dict | None = None):
         if clone_dict:
             (
                 clone_prompt_code,
@@ -225,7 +246,94 @@ class StepAudioTTS:
         else:
             cosy_model = self.common_cosy_model
 
-        if clone_dict:
-            prompt_speaker = ""
-
         return prompt_speaker, prompt_speaker_info, cosy_model
+
+    def static_batch_stream(
+        self,
+        text: str,
+        prompt_speaker: str,
+        clone_dict: dict | None = None,
+        session_id: str = str(uuid.uuid4()),
+    ):
+        """
+        - step1 lm stream generate token
+        - static batch size to gen waveform
+            - flow: audio vq tokens to mel
+            - hifi: mel to waveform
+        """
+        prompt_speaker, prompt_speaker_info, cosy_model = self.preprocess_promt(
+            text, prompt_speaker, clone_dict=clone_dict
+        )
+        output_audio_sample_rate = cosy_model.model.hift.sampling_rate
+
+        token_ids = self.tokenize(
+            text,
+            prompt_speaker_info["prompt_text"],
+            prompt_speaker,
+            prompt_speaker_info["prompt_code"],
+        )
+
+        generation_kwargs = dict(
+            input_ids=torch.tensor([token_ids]).to(torch.long).to("cuda"),
+            eos_token_id=3,
+            streamer=self.streamer,
+            max_length=8192,
+            temperature=0.7,
+            do_sample=True,
+            logits_processor=LogitsProcessorList([RepetitionAwareLogitsProcessor()]),
+        )
+        # print("generation_kwargs", generation_kwargs)
+
+        thread = Thread(target=self.llm.generate, kwargs=generation_kwargs)
+        thread.start()
+
+        with self.session_lm_generat_lock:
+            self.session_lm_generated_ids[session_id] = []
+
+        batch_size = math.ceil(self.stream_factor * cosy_model.model.flow.input_frame_rate)
+        for token_id in self.streamer:
+            # print(token_id, end=",", flush=True)
+            if token_id == 3:  # skip <|EOT|>, break
+                break
+            self.session_lm_generated_ids[session_id].append(token_id)
+            if len(self.session_lm_generated_ids[session_id]) % batch_size == 0:
+                batch = (
+                    torch.tensor(self.session_lm_generated_ids[session_id])
+                    .unsqueeze(0)
+                    .to(cosy_model.model.device)
+                    - 65536
+                )  # [T] -> [1,T]
+                # Process each batch
+                sub_tts_speech = cosy_model.token_to_wav_offline(
+                    batch,
+                    prompt_speaker_info["cosy_speech_feat"].to(torch.bfloat16),
+                    prompt_speaker_info["cosy_speech_feat_len"],
+                    prompt_speaker_info["cosy_prompt_token"],
+                    prompt_speaker_info["cosy_prompt_token_len"],
+                    prompt_speaker_info["cosy_speech_embedding"].to(torch.bfloat16),
+                )
+                yield {"tts_speech": sub_tts_speech, "sample_rate": output_audio_sample_rate}
+                with self.session_lm_generat_lock:
+                    self.session_lm_generated_ids[session_id] = []
+
+        if len(self.session_lm_generated_ids[session_id]) > 0:
+            batch = (
+                torch.tensor(self.session_lm_generated_ids[session_id])
+                .unsqueeze(0)
+                .to(cosy_model.model.device)
+                - 65536
+            )  # [T] -> [1,T]
+            # Process each batch
+            sub_tts_speech = cosy_model.token_to_wav_offline(
+                batch,
+                prompt_speaker_info["cosy_speech_feat"].to(torch.bfloat16),
+                prompt_speaker_info["cosy_speech_feat_len"],
+                prompt_speaker_info["cosy_prompt_token"],
+                prompt_speaker_info["cosy_prompt_token_len"],
+                prompt_speaker_info["cosy_speech_embedding"].to(torch.bfloat16),
+            )
+            yield {"tts_speech": sub_tts_speech, "sample_rate": output_audio_sample_rate}
+
+        with self.session_lm_generat_lock:
+            self.session_lm_generated_ids.pop(session_id)
+        torch.cuda.empty_cache()
