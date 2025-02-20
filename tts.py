@@ -1,6 +1,10 @@
+import math
 import os
 import re
 import json
+from threading import Thread, Lock
+import uuid
+
 
 import torchaudio
 import torch
@@ -9,12 +13,11 @@ from transformers.generation.logits_process import LogitsProcessor
 from transformers.generation.utils import LogitsProcessorList
 
 from cosyvoice.cli.cosyvoice import CosyVoice
+from streamer import TokenStreamer
 
 
 class RepetitionAwareLogitsProcessor(LogitsProcessor):
-    def __call__(
-        self, input_ids: torch.LongTensor, scores: torch.FloatTensor
-    ) -> torch.FloatTensor:
+    def __call__(self, input_ids: torch.LongTensor, scores: torch.FloatTensor) -> torch.FloatTensor:
         window_size = 10
         threshold = 0.1
 
@@ -36,22 +39,20 @@ class StepAudioTTS:
         self,
         model_path,
         encoder,
+        device_map=None,
+        stream_factor=2,
+        **kwargs,
     ):
         self.llm = AutoModelForCausalLM.from_pretrained(
             model_path,
             torch_dtype=torch.bfloat16,
-            device_map="cuda",
+            device_map="cuda" if not device_map else device_map,
             trust_remote_code=True,
+            **kwargs,
         )
-        self.tokenizer = AutoTokenizer.from_pretrained(
-            model_path, trust_remote_code=True
-        )
-        self.common_cosy_model = CosyVoice(
-            os.path.join(model_path, "CosyVoice-300M-25Hz")
-        )
-        self.music_cosy_model = CosyVoice(
-            os.path.join(model_path, "CosyVoice-300M-25Hz-Music")
-        )
+        self.tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
+        self.common_cosy_model = CosyVoice(os.path.join(model_path, "CosyVoice-300M-25Hz"))
+        self.music_cosy_model = CosyVoice(os.path.join(model_path, "CosyVoice-300M-25Hz-Music"))
         self.encoder = encoder
         self.sys_prompt_dict = {
             "sys_prompt_for_rap": "请参考对话历史里的音色，用RAP方式将文本内容大声说唱出来。",
@@ -61,36 +62,20 @@ class StepAudioTTS:
         }
         self.register_speakers()
 
+        self.streamer = TokenStreamer
+        assert (
+            stream_factor >= 2
+        ), "stream_factor must >=2 increase for better speech quality, but rft slow (speech quality vs rft)"
+        self.stream_factor = stream_factor  # >=2 increase for better speech quality, but rft slow (speech quality vs rft)
+
+        # session ctx dict with lock, maybe need a session class
+        self.session_lm_generat_lock = Lock()
+        self.session_lm_generated_ids = {}  # session_id: ids(ptr)
+
     def __call__(self, text: str, prompt_speaker: str, clone_dict: dict | None = None):
-        if clone_dict:
-            clone_prompt_code, clone_prompt_token, clone_prompt_token_len, clone_speech_feat, clone_speech_feat_len, clone_speech_embedding = (
-                self.preprocess_prompt_wav(clone_dict['wav_path'])
-            )
-            prompt_speaker = clone_dict['speaker']
-            self.speakers_info[prompt_speaker] = {
-                "prompt_text": clone_dict['prompt_text'],
-                "prompt_code": clone_prompt_code,
-                "cosy_speech_feat": clone_speech_feat.to(torch.bfloat16),
-                "cosy_speech_feat_len": clone_speech_feat_len,
-                "cosy_speech_embedding": clone_speech_embedding.to(torch.bfloat16),
-                "cosy_prompt_token": clone_prompt_token,
-                "cosy_prompt_token_len": clone_prompt_token_len,
-            }
-
-        instruction_name = self.detect_instruction_name(text)
-        prompt_speaker_info = self.speakers_info[prompt_speaker]
-        
-        if instruction_name in ("RAP", "哼唱"):
-            if not clone_dict:
-                prompt_speaker_info = self.speakers_info[
-                    f"{prompt_speaker}{instruction_name}"
-                ]
-            cosy_model = self.music_cosy_model
-        else:
-            cosy_model = self.common_cosy_model
-
-        if clone_dict:
-            prompt_speaker = ''
+        prompt_speaker, prompt_speaker_info, cosy_model = self.preprocess_promt(
+            text, prompt_speaker, clone_dict=clone_dict
+        )
 
         token_ids = self.tokenize(
             text,
@@ -126,9 +111,14 @@ class StepAudioTTS:
 
         for speaker_id, prompt_text in speakers_info.items():
             prompt_wav_path = f"speakers/{speaker_id}_prompt.wav"
-            prompt_code, prompt_token, prompt_token_len, speech_feat, speech_feat_len, speech_embedding = (
-                self.preprocess_prompt_wav(prompt_wav_path)
-            )
+            (
+                prompt_code,
+                prompt_token,
+                prompt_token_len,
+                speech_feat,
+                speech_feat_len,
+                speech_embedding,
+            ) = self.preprocess_prompt_wav(prompt_wav_path)
 
             self.speakers_info[speaker_id] = {
                 "prompt_text": prompt_text,
@@ -149,9 +139,7 @@ class StepAudioTTS:
             instruction_name = instruction.strip("()（）")
         return instruction_name
 
-    def tokenize(
-        self, text: str, prompt_text: str, prompt_speaker: str, prompt_code: list
-    ):
+    def tokenize(self, text: str, prompt_text: str, prompt_speaker: str, prompt_code: list):
         rap_or_vocal = self.detect_instruction_name(text) in ("RAP", "哼唱")
 
         if rap_or_vocal:
@@ -197,23 +185,21 @@ class StepAudioTTS:
         )
         return history
 
-    def preprocess_prompt_wav(self, prompt_wav_path : str):
+    def preprocess_prompt_wav(self, prompt_wav_path: str):
         prompt_wav, prompt_wav_sr = torchaudio.load(prompt_wav_path)
         if prompt_wav.shape[0] > 1:
             prompt_wav = prompt_wav.mean(dim=0, keepdim=True)  # 将多通道音频转换为单通道
-        prompt_wav_16k = torchaudio.transforms.Resample(
-            orig_freq=prompt_wav_sr, new_freq=16000
-        )(prompt_wav)
-        prompt_wav_22k = torchaudio.transforms.Resample(
-            orig_freq=prompt_wav_sr, new_freq=22050
-        )(prompt_wav)
+        prompt_wav_16k = torchaudio.transforms.Resample(orig_freq=prompt_wav_sr, new_freq=16000)(
+            prompt_wav
+        )
+        prompt_wav_22k = torchaudio.transforms.Resample(orig_freq=prompt_wav_sr, new_freq=22050)(
+            prompt_wav
+        )
 
-        speech_feat, speech_feat_len = (
-            self.common_cosy_model.frontend._extract_speech_feat(prompt_wav_22k)
+        speech_feat, speech_feat_len = self.common_cosy_model.frontend._extract_speech_feat(
+            prompt_wav_22k
         )
-        speech_embedding = self.common_cosy_model.frontend._extract_spk_embedding(
-            prompt_wav_16k
-        )
+        speech_embedding = self.common_cosy_model.frontend._extract_spk_embedding(prompt_wav_16k)
 
         prompt_code, _, _ = self.encoder.wav2token(prompt_wav, prompt_wav_sr)
         prompt_token = torch.tensor([prompt_code], dtype=torch.long) - 65536
@@ -227,3 +213,121 @@ class StepAudioTTS:
             speech_feat_len,
             speech_embedding,
         )
+
+    def preprocess_promt(self, text: str, prompt_speaker: str, clone_dict: dict | None = None):
+        if clone_dict:
+            (
+                clone_prompt_code,
+                clone_prompt_token,
+                clone_prompt_token_len,
+                clone_speech_feat,
+                clone_speech_feat_len,
+                clone_speech_embedding,
+            ) = self.preprocess_prompt_wav(clone_dict["wav_path"])
+            prompt_speaker = clone_dict["speaker"]
+            self.speakers_info[prompt_speaker] = {
+                "prompt_text": clone_dict["prompt_text"],
+                "prompt_code": clone_prompt_code,
+                "cosy_speech_feat": clone_speech_feat.to(torch.bfloat16),
+                "cosy_speech_feat_len": clone_speech_feat_len,
+                "cosy_speech_embedding": clone_speech_embedding.to(torch.bfloat16),
+                "cosy_prompt_token": clone_prompt_token,
+                "cosy_prompt_token_len": clone_prompt_token_len,
+            }
+
+        instruction_name = self.detect_instruction_name(text)
+        prompt_speaker_info = self.speakers_info[prompt_speaker]
+
+        if instruction_name in ("RAP", "哼唱"):
+            if not clone_dict:
+                prompt_speaker_info = self.speakers_info[f"{prompt_speaker}{instruction_name}"]
+            cosy_model = self.music_cosy_model
+        else:
+            cosy_model = self.common_cosy_model
+
+        return prompt_speaker, prompt_speaker_info, cosy_model
+
+    def static_batch_stream(
+        self,
+        text: str,
+        prompt_speaker: str,
+        clone_dict: dict | None = None,
+        session_id: str = str(uuid.uuid4()),
+    ):
+        """
+        - step1 lm stream generate token
+        - static batch size to gen waveform
+            - flow: audio vq tokens to mel
+            - hifi: mel to waveform
+        """
+        prompt_speaker, prompt_speaker_info, cosy_model = self.preprocess_promt(
+            text, prompt_speaker, clone_dict=clone_dict
+        )
+
+        token_ids = self.tokenize(
+            text,
+            prompt_speaker_info["prompt_text"],
+            prompt_speaker,
+            prompt_speaker_info["prompt_code"],
+        )
+
+        generation_kwargs = dict(
+            input_ids=torch.tensor([token_ids]).to(torch.long).to("cuda"),
+            eos_token_id=3,
+            streamer=self.streamer,
+            max_length=8192,
+            temperature=0.7,
+            do_sample=True,
+            logits_processor=LogitsProcessorList([RepetitionAwareLogitsProcessor()]),
+        )
+        # print("generation_kwargs", generation_kwargs)
+
+        thread = Thread(target=self.llm.generate, kwargs=generation_kwargs)
+        thread.start()
+
+        with self.session_lm_generat_lock:
+            self.session_lm_generated_ids[session_id] = []
+
+        batch_size = math.ceil(self.stream_factor * cosy_model.model.flow.input_frame_rate)
+        for token_id in self.streamer:
+            # print(token_id, end=",", flush=True)
+            if token_id == 3:  # skip <|EOT|>, break
+                break
+            self.session_lm_generated_ids[session_id].append(token_id)
+            if len(self.session_lm_generated_ids[session_id]) % batch_size == 0:
+                batch = (
+                    torch.tensor(self.session_lm_generated_ids[session_id])
+                    .unsqueeze(0)
+                    .to(self.device)
+                )  # [T] -> [1,T]
+                # Process each batch
+                sub_tts_speech = self.common_cosy_model.token_to_wav_offline(
+                    batch,
+                    prompt_speaker_info["cosy_speech_feat"].to(torch.bfloat16),
+                    prompt_speaker_info["cosy_speech_feat_len"],
+                    prompt_speaker_info["cosy_prompt_token"],
+                    prompt_speaker_info["cosy_prompt_token_len"],
+                    prompt_speaker_info["cosy_speech_embedding"].to(torch.bfloat16),
+                )
+                yield {"tts_speech": sub_tts_speech}
+                with self.session_lm_generat_lock:
+                    self.session_lm_generated_ids[session_id] = []
+
+        if len(self.session_lm_generated_ids[session_id]) > 0:
+            batch = (
+                torch.tensor(self.session_lm_generated_ids[session_id]).unsqueeze(0).to(self.device)
+            )  # [T] -> [1,T]
+            # Process each batch
+            sub_tts_speech = self.common_cosy_model.token_to_wav_offline(
+                batch,
+                prompt_speaker_info["cosy_speech_feat"].to(torch.bfloat16),
+                prompt_speaker_info["cosy_speech_feat_len"],
+                prompt_speaker_info["cosy_prompt_token"],
+                prompt_speaker_info["cosy_prompt_token_len"],
+                prompt_speaker_info["cosy_speech_embedding"].to(torch.bfloat16),
+            )
+            yield {"tts_speech": sub_tts_speech}
+
+        with self.lock:
+            self.session_lm_generated_ids.pop(session_id)
+        torch.cuda.empty_cache()
