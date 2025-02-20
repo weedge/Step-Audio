@@ -46,8 +46,8 @@ class StepAudioTTS:
         # fast path to check params
         assert (
             stream_factor >= 2
-        ), "stream_factor must >=2 increase for better speech quality, but rft slow (speech quality vs rft)"
-        self.stream_factor = stream_factor  # >=2 increase for better speech quality, but rft slow (speech quality vs rft)
+        ), "stream_factor must >=2 increase for better speech quality, but rtf slow (speech quality vs rtf)"
+        self.stream_factor = stream_factor  # >=2 increase for better speech quality, but rtf slow (speech quality vs rtf)
         self.streamer = TokenStreamer(skip_prompt=True)
 
         # session ctx dict with lock, maybe need a session class
