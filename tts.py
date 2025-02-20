@@ -299,6 +299,7 @@ class StepAudioTTS:
                     torch.tensor(self.session_lm_generated_ids[session_id])
                     .unsqueeze(0)
                     .to(cosy_model.model.device)
+                    - 65536
                 )  # [T] -> [1,T]
                 # Process each batch
                 sub_tts_speech = cosy_model.token_to_wav_offline(
@@ -318,6 +319,7 @@ class StepAudioTTS:
                 torch.tensor(self.session_lm_generated_ids[session_id])
                 .unsqueeze(0)
                 .to(cosy_model.model.device)
+                - 65536
             )  # [T] -> [1,T]
             # Process each batch
             sub_tts_speech = cosy_model.token_to_wav_offline(
