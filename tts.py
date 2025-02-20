@@ -291,7 +291,7 @@ class StepAudioTTS:
 
         batch_size = math.ceil(self.stream_factor * cosy_model.model.flow.input_frame_rate)
         for token_id in self.streamer:
-            print(token_id, end=",", flush=True)
+            # print(token_id, end=",", flush=True)
             if token_id == 3:  # skip <|EOT|>, break
                 break
             self.session_lm_generated_ids[session_id].append(token_id)

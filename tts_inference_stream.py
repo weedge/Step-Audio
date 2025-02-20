@@ -24,7 +24,7 @@ def main():
         "--stream", type=str, default="static_batch", help="Synthesis audios with streaming"
     )
     parser.add_argument(
-        "--stream_factor", type=int, default=2, help="Synthesis audios stream factor"
+        "--stream-factor", type=int, default=2, help="Synthesis audios stream factor"
     )
     args = parser.parse_args()
     os.makedirs(f"{args.output_path}", exist_ok=True)
