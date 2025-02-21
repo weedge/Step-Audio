@@ -48,7 +48,6 @@ class StepAudioTTS:
             stream_factor >= 2
         ), "stream_factor must >=2 increase for better speech quality, but rtf slow (speech quality vs rtf)"
         self.stream_factor = stream_factor  # >=2 increase for better speech quality, but rtf slow (speech quality vs rtf)
-        self.streamer = TokenStreamer(skip_prompt=True)
 
         # session ctx dict with lock, maybe need a session class
         self.session_lm_generat_lock = Lock()
@@ -248,6 +247,7 @@ class StepAudioTTS:
 
         return prompt_speaker, prompt_speaker_info, cosy_model
 
+    @torch.inference_mode()
     def static_batch_stream(
         self,
         text: str,
@@ -273,10 +273,13 @@ class StepAudioTTS:
             prompt_speaker_info["prompt_code"],
         )
 
+        # session streamer
+        streamer = TokenStreamer(skip_prompt=True)
+
         generation_kwargs = dict(
             input_ids=torch.tensor([token_ids]).to(torch.long).to("cuda"),
             eos_token_id=3,
-            streamer=self.streamer,
+            streamer=streamer,
             max_length=8192,
             temperature=0.7,
             do_sample=True,
@@ -291,7 +294,7 @@ class StepAudioTTS:
             self.session_lm_generated_ids[session_id] = []
 
         batch_size = math.ceil(self.stream_factor * cosy_model.model.flow.input_frame_rate)
-        for token_id in self.streamer:
+        for token_id in streamer:
             # print(token_id, end=",", flush=True)
             if token_id == 3:  # skip <|EOT|>, break
                 break
