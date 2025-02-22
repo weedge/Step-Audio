@@ -135,7 +135,9 @@ class StepAudioTTS:
         self.speakers_info = {}
 
         cur_dir= os.path.dirname(os.path.abspath(__file__))
+        print(cur_dir)
         file_path: str = os.path.join(cur_dir,"speakers/speakers_info.json")
+        print(file_path)
         with open(file_path, "r") as f:
             speakers_info = json.load(f)
 
