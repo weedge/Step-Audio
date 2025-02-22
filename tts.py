@@ -41,9 +41,9 @@ class StepAudioTTS:
         encoder,
         device_map: str | dict | None = None,
         stream_factor: int = 2,
-        speaker_file_path: str = "speakers/speakers_info.json",
         **kwargs,
     ):
+        speaker_file_path = kwargs.pop("speaker_file_path", "speakers/speakers_info.json")
         # fast path to check params
         assert (
             stream_factor >= 2
@@ -58,11 +58,26 @@ class StepAudioTTS:
         # if not, please manually set LD_LIBRARY_PATH=xxx/python3.10/site-packages/nvidia/cuda_nvrtc/lib
         try:
             if torch.__version__ >= "2.5":
-                torch.ops.load_library(os.path.join(model_path, 'lib/liboptimus_ths-torch2.5-cu124.cpython-310-x86_64-linux-gnu.so'))
+                torch.ops.load_library(
+                    os.path.join(
+                        model_path,
+                        "lib/liboptimus_ths-torch2.5-cu124.cpython-310-x86_64-linux-gnu.so",
+                    )
+                )
             elif torch.__version__ >= "2.3":
-                torch.ops.load_library(os.path.join(model_path, 'lib/liboptimus_ths-torch2.3-cu121.cpython-310-x86_64-linux-gnu.so'))
+                torch.ops.load_library(
+                    os.path.join(
+                        model_path,
+                        "lib/liboptimus_ths-torch2.3-cu121.cpython-310-x86_64-linux-gnu.so",
+                    )
+                )
             elif torch.__version__ >= "2.2":
-                torch.ops.load_library(os.path.join(model_path, 'lib/liboptimus_ths-torch2.2-cu121.cpython-310-x86_64-linux-gnu.so'))
+                torch.ops.load_library(
+                    os.path.join(
+                        model_path,
+                        "lib/liboptimus_ths-torch2.2-cu121.cpython-310-x86_64-linux-gnu.so",
+                    )
+                )
             print("Load optimus_ths successfully and flash attn would be enabled")
         except Exception as err:
             print(f"Fail to load optimus_ths and flash attn is disabled: {err}")
@@ -117,7 +132,7 @@ class StepAudioTTS:
             22050,
         )
 
-    def register_speakers(self, file_path:str="speakers/speakers_info.json"):
+    def register_speakers(self, file_path: str = "speakers/speakers_info.json"):
         self.speakers_info = {}
 
         with open(file_path, "r") as f:
