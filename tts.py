@@ -347,7 +347,9 @@ class StepAudioTTS:
                 yield {"tts_speech": sub_tts_speech, "sample_rate": output_audio_sample_rate}
                 self.session_lm_generated_ids.set(session_id, [])
 
-        self.session_lm_generated_ids.set(session_id, [65536])
+        if len(self.session_lm_generated_ids.get(session_id)) == 0: # end to finalize
+            self.session_lm_generated_ids.set(session_id, [65536])
+
         batch = (
             torch.tensor(self.session_lm_generated_ids.get(session_id))
             .unsqueeze(0)

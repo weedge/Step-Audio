@@ -140,4 +140,4 @@ class CosyVoiceModel:
             self.flow_cache_dict.pop(session_id)
             logging.info("finalize tts_speech: {}".format(tts_speech.shape))
 
-        return tts_speech
+        return tts_speech.cpu()
