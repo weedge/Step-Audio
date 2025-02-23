@@ -63,12 +63,9 @@ class CosyVoiceModel:
         finalize=False,
         speed=1.0,
     ):
-        if session_id not in self.flow_cache_dict:
+        if self.flow_cache_dict.get(session_id) is None:
             self.mel_overlap_dict.set(session_id, torch.zeros(1, 80, 0))
             self.flow_cache_dict.set(session_id, torch.zeros(1, 80, 0, 2))
-
-        if session_id not in self.hift_cache_dict:
-            self.hift_cache_dict.set(session_id, None)
 
         tts_mel, flow_cache = self.flow.inference(
             token=token.to(self.device),
