@@ -338,10 +338,8 @@ class StepAudioTTS:
                 # Process each batch
                 sub_tts_speech = cosy_model.model.token2wav(
                     batch,
-                    prompt_speaker_info["cosy_speech_feat"].to(torch.bfloat16),
-                    prompt_speaker_info["cosy_speech_feat_len"],
                     prompt_speaker_info["cosy_prompt_token"],
-                    prompt_speaker_info["cosy_prompt_token_len"],
+                    prompt_speaker_info["cosy_speech_feat"].to(torch.bfloat16),
                     prompt_speaker_info["cosy_speech_embedding"].to(torch.bfloat16),
                     session_id,
                     finalize=False,
@@ -359,10 +357,8 @@ class StepAudioTTS:
         # Process each batch
         sub_tts_speech = cosy_model.model.token2wav(
             batch,
-            prompt_speaker_info["cosy_speech_feat"].to(torch.bfloat16),
-            prompt_speaker_info["cosy_speech_feat_len"],
             prompt_speaker_info["cosy_prompt_token"],
-            prompt_speaker_info["cosy_prompt_token_len"],
+            prompt_speaker_info["cosy_speech_feat"].to(torch.bfloat16),
             prompt_speaker_info["cosy_speech_embedding"].to(torch.bfloat16),
             session_id,
             finalize=True,
