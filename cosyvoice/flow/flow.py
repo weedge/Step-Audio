@@ -193,4 +193,4 @@ class MaskedDiffWithXvec(torch.nn.Module):
         )
         feat = feat[:, :, mel_len1:]
         assert feat.shape[2] == mel_len2
-        return feat, flow_cache
+        return feat.float(), flow_cache
