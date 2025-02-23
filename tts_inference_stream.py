@@ -1,14 +1,11 @@
 import os
 import argparse
-from dotenv import load_dotenv
 
 import torchaudio
 
 from tokenizer import StepAudioTokenizer
 from utils import merge_tensors
 from tts import StepAudioTTS
-
-load_dotenv(override=True)
 
 
 def main():
