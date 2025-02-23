@@ -53,7 +53,7 @@ class CosyVoice:
         prompt_token_len,
         embedding,
     ):
-        tts_mel = self.model.flow.inference(
+        tts_mel, _ = self.model.flow.inference(
             token=speech_token.to(self.model.device),
             token_len=torch.tensor([speech_token.size(1)], dtype=torch.int32).to(self.model.device),
             prompt_token=prompt_token.to(self.model.device),
