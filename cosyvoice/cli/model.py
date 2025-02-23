@@ -35,6 +35,7 @@ class CosyVoiceModel:
         self.flow_cache_dict = ThreadSafeDict()
         self.hift_cache_dict = ThreadSafeDict()
 
+        self.token_overlap_len = 20
         # mel fade in out
         self.mel_overlap_len = int(
             self.token_overlap_len / self.flow.input_frame_rate * 22050 / 256
