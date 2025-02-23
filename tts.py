@@ -365,6 +365,5 @@ class StepAudioTTS:
         )
         yield {"tts_speech": sub_tts_speech, "sample_rate": output_audio_sample_rate}
 
-        with self.session_lm_generat_lock:
-            self.session_lm_generated_ids.pop(session_id)
+        self.session_lm_generated_ids.pop(session_id)
         torch.cuda.empty_cache()
