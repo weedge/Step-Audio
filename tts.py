@@ -336,34 +336,36 @@ class StepAudioTTS:
                     - 65536
                 )  # [T] -> [1,T]
                 # Process each batch
-                sub_tts_speech = cosy_model.token_to_wav_offline(
+                sub_tts_speech = cosy_model.model.token2wav(
                     batch,
                     prompt_speaker_info["cosy_speech_feat"].to(torch.bfloat16),
                     prompt_speaker_info["cosy_speech_feat_len"],
                     prompt_speaker_info["cosy_prompt_token"],
                     prompt_speaker_info["cosy_prompt_token_len"],
                     prompt_speaker_info["cosy_speech_embedding"].to(torch.bfloat16),
+                    finalize=False,
                 )
                 yield {"tts_speech": sub_tts_speech, "sample_rate": output_audio_sample_rate}
                 self.session_lm_generated_ids.set(session_id, [])
 
-        if len(self.session_lm_generated_ids.get(session_id)) > 0:
-            batch = (
-                torch.tensor(self.session_lm_generated_ids.get(session_id))
-                .unsqueeze(0)
-                .to(cosy_model.model.device)
-                - 65536
-            )  # [T] -> [1,T]
-            # Process each batch
-            sub_tts_speech = cosy_model.token_to_wav_offline(
-                batch,
-                prompt_speaker_info["cosy_speech_feat"].to(torch.bfloat16),
-                prompt_speaker_info["cosy_speech_feat_len"],
-                prompt_speaker_info["cosy_prompt_token"],
-                prompt_speaker_info["cosy_prompt_token_len"],
-                prompt_speaker_info["cosy_speech_embedding"].to(torch.bfloat16),
-            )
-            yield {"tts_speech": sub_tts_speech, "sample_rate": output_audio_sample_rate}
+        self.session_lm_generated_ids.set(session_id, [])
+        batch = (
+            torch.tensor(self.session_lm_generated_ids.get(session_id))
+            .unsqueeze(0)
+            .to(cosy_model.model.device)
+            - 65536
+        )  # [T] -> [1,T]
+        # Process each batch
+        sub_tts_speech = cosy_model.model.token2wav(
+            batch,
+            prompt_speaker_info["cosy_speech_feat"].to(torch.bfloat16),
+            prompt_speaker_info["cosy_speech_feat_len"],
+            prompt_speaker_info["cosy_prompt_token"],
+            prompt_speaker_info["cosy_prompt_token_len"],
+            prompt_speaker_info["cosy_speech_embedding"].to(torch.bfloat16),
+            finalize=True,
+        )
+        yield {"tts_speech": sub_tts_speech, "sample_rate": output_audio_sample_rate}
 
         with self.session_lm_generat_lock:
             self.session_lm_generated_ids.pop(session_id)
