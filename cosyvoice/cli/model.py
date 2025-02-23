@@ -102,7 +102,7 @@ class CosyVoiceModel:
 
             tts_mel = tts_mel[:, :, : -self.mel_overlap_len]
             tts_speech, tts_source = self.hift.inference(
-                speech_feat=tts_mel, cache_source=hift_cache_source
+                mel=tts_mel, cache_source=hift_cache_source
             )
 
             if self.hift_cache_dict.get(session_id) is not None:
@@ -128,7 +128,7 @@ class CosyVoiceModel:
                 ), "speed change only support non-stream inference mode"
                 tts_mel = F.interpolate(tts_mel, size=int(tts_mel.shape[2] / speed), mode="linear")
             tts_speech, tts_source = self.hift.inference(
-                speech_feat=tts_mel, cache_source=hift_cache_source
+                mel=tts_mel, cache_source=hift_cache_source
             )
             if self.hift_cache_dict.get(session_id) is not None:
                 tts_speech = fade_in_out(
