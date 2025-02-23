@@ -11,11 +11,13 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import threading
+import logging
+
+import numpy as np
 import torch
 from torch.nn import functional as F
 
-from cosyvoice.utils.common import fade_in_out
+from cosyvoice.utils.common import fade_in_out, ThreadSafeDict
 
 
 class CosyVoiceModel:
@@ -29,10 +31,20 @@ class CosyVoiceModel:
         self.hift = hift
 
         # dict used to store session related variable
-        self.lock = threading.Lock()  # dict lock
-        self.mel_overlap_dict = {}
-        self.flow_cache_dict = {}
-        self.hift_cache_dict = {}
+        self.mel_overlap_dict = ThreadSafeDict()
+        self.flow_cache_dict = ThreadSafeDict()
+        self.hift_cache_dict = ThreadSafeDict()
+
+        # mel fade in out
+        self.mel_overlap_len = int(
+            self.token_overlap_len / self.flow.input_frame_rate * 22050 / 256
+        )
+        self.mel_window = np.hamming(2 * self.mel_overlap_len)
+        # hift cache
+        self.mel_cache_len = 20
+        self.source_cache_len = int(self.mel_cache_len * 256)
+        # speech fade in out
+        self.speech_window = np.hamming(2 * self.source_cache_len)
 
     def load(self, flow_model, hift_model):
         self.flow.load_state_dict(torch.load(flow_model, map_location=self.device))
@@ -49,17 +61,13 @@ class CosyVoiceModel:
         session_id,
         finalize=False,
         speed=1.0,
-        is_flow_cache=False,
-        is_hift_cache=False,
     ):
-        if is_flow_cache is True and session_id not in self.flow_cache_dict:
-            with self.lock:
-                self.mel_overlap_dict[session_id] = torch.zeros(1, 80, 0)
-                self.flow_cache_dict[session_id] = torch.zeros(1, 80, 0, 2)
+        if session_id not in self.flow_cache_dict:
+            self.mel_overlap_dict.set(session_id, torch.zeros(1, 80, 0))
+            self.flow_cache_dict.set(session_id, torch.zeros(1, 80, 0, 2))
 
-        if is_hift_cache is True and session_id not in self.hift_cache_dict:
-            with self.lock:
-                self.hift_cache_dict[session_id] = None
+        if session_id not in self.hift_cache_dict:
+            self.hift_cache_dict.set(session_id, None)
 
         tts_mel, flow_cache = self.flow.inference(
             token=token.to(self.device),
@@ -71,61 +79,67 @@ class CosyVoiceModel:
             prompt_feat=prompt_feat.to(self.device),
             prompt_feat_len=torch.tensor([prompt_feat.shape[1]], dtype=torch.int32).to(self.device),
             embedding=embedding.to(self.device),
-            flow_cache=self.flow_cache_dict[session_id] if is_flow_cache else None,
+            flow_cache=self.flow_cache_dict.get(session_id),
         )
-        self.flow_cache_dict[session_id] = flow_cache if is_flow_cache else None
+        self.flow_cache_dict.set(session_id, flow_cache)
 
         # mel overlap fade in out
-        if is_flow_cache and self.mel_overlap_dict[session_id].shape[2] != 0:
-            tts_mel = fade_in_out(tts_mel, self.mel_overlap_dict[session_id], self.mel_window)
+        if self.mel_overlap_dict.get(session_id).shape[2] != 0:
+            tts_mel = fade_in_out(tts_mel, self.mel_overlap_dict.get(session_id), self.mel_window)
 
         hift_cache_source = None
-        if is_hift_cache is True:
-            if self.hift_cache_dict[session_id] is not None:
-                # append hift cache
-                hift_cache_mel, hift_cache_source = (
-                    self.hift_cache_dict[session_id]["mel"],
-                    self.hift_cache_dict[session_id]["source"],
-                )
-                tts_mel = torch.concat([hift_cache_mel, tts_mel], dim=2)
-            else:
-                hift_cache_source = torch.zeros(1, 1, 0)
+        if self.hift_cache_dict.get(session_id) is not None:
+            # append hift cache
+            hift_cache_mel, hift_cache_source = (
+                self.hift_cache_dict.get(session_id)["mel"],
+                self.hift_cache_dict.get(session_id)["source"],
+            )
+            tts_mel = torch.concat([hift_cache_mel, tts_mel], dim=2)
+        else:
+            hift_cache_source = torch.zeros(1, 1, 0)
 
         # keep overlap mel and hift cache
         if finalize is False:
-            if is_flow_cache is True:
-                self.mel_overlap_dict[session_id] = tts_mel[:, :, -self.mel_overlap_len :]
+            self.mel_overlap_dict.set(session_id, tts_mel[:, :, -self.mel_overlap_len :])
 
             tts_mel = tts_mel[:, :, : -self.mel_overlap_len]
             tts_speech, tts_source = self.hift.inference(
                 speech_feat=tts_mel, cache_source=hift_cache_source
             )
 
-            if is_hift_cache is True:
-                if self.hift_cache_dict[session_id] is not None:
-                    tts_speech = fade_in_out(
-                        tts_speech, self.hift_cache_dict[session_id]["speech"], self.speech_window
-                    )
-                self.hift_cache_dict[session_id] = {
+            if self.hift_cache_dict.get(session_id) is not None:
+                tts_speech = fade_in_out(
+                    tts_speech, self.hift_cache_dict.get(session_id)["speech"], self.speech_window
+                )
+            self.hift_cache_dict.set(
+                session_id,
+                {
                     "mel": tts_mel[:, :, -self.mel_cache_len :],
                     "source": tts_source[:, :, -self.source_cache_len :],
                     "speech": tts_speech[:, -self.source_cache_len :],
-                }
+                },
+            )
 
             tts_speech = tts_speech[:, : -self.source_cache_len]
-        else:
+
+            logging.info("tts_speech: {}".format(tts_speech.shape))
+        else:  # finalize
             if speed != 1.0:
-                if is_hift_cache is True:
-                    assert (
-                        self.hift_cache_dict[session_id] is None
-                    ), "speed change only support non-stream inference mode"
+                assert (
+                    self.hift_cache_dict.get(session_id) is None
+                ), "speed change only support non-stream inference mode"
                 tts_mel = F.interpolate(tts_mel, size=int(tts_mel.shape[2] / speed), mode="linear")
             tts_speech, tts_source = self.hift.inference(
                 speech_feat=tts_mel, cache_source=hift_cache_source
             )
-            if is_hift_cache is True and self.hift_cache_dict[session_id] is not None:
+            if self.hift_cache_dict.get(session_id) is not None:
                 tts_speech = fade_in_out(
-                    tts_speech, self.hift_cache_dict[session_id]["speech"], self.speech_window
+                    tts_speech, self.hift_cache_dict.get(session_id)["speech"], self.speech_window
                 )
+
+            self.mel_overlap_dict.pop(session_id)
+            self.hift_cache_dict.pop(session_id)
+            self.flow_cache_dict.pop(session_id)
+            logging.info("finalize tts_speech: {}".format(tts_speech.shape))
 
         return tts_speech

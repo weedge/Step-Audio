@@ -13,6 +13,7 @@ from transformers.generation.logits_process import LogitsProcessor
 from transformers.generation.utils import LogitsProcessorList
 
 from cosyvoice.cli.cosyvoice import CosyVoice
+from cosyvoice.utils.common import ThreadSafeDict
 from streamer import TokenStreamer
 
 
@@ -50,8 +51,7 @@ class StepAudioTTS:
         self.stream_factor = stream_factor  # >=2 increase for better speech quality, but rtf slow (speech quality vs rtf)
 
         # session ctx dict with lock, maybe need a session class
-        self.session_lm_generat_lock = Lock()
-        self.session_lm_generated_ids = {}  # session_id: ids(ptr)
+        self.session_lm_generated_ids = ThreadSafeDict()  # session_id: ids(ptr)
 
         # load optimus_ths for flash attention, make sure LD_LIBRARY_PATH has `nvidia/cuda_nvrtc/lib`
         # if not, please manually set LD_LIBRARY_PATH=xxx/python3.10/site-packages/nvidia/cuda_nvrtc/lib
@@ -134,15 +134,15 @@ class StepAudioTTS:
     def register_speakers(self):
         self.speakers_info = {}
 
-        cur_dir= os.path.dirname(os.path.abspath(__file__))
+        cur_dir = os.path.dirname(os.path.abspath(__file__))
         print(cur_dir)
-        file_path: str = os.path.join(cur_dir,"speakers/speakers_info.json")
+        file_path: str = os.path.join(cur_dir, "speakers/speakers_info.json")
         print(file_path)
         with open(file_path, "r") as f:
             speakers_info = json.load(f)
 
         for speaker_id, prompt_text in speakers_info.items():
-            prompt_wav_path = os.path.join(cur_dir,f"speakers/{speaker_id}_prompt.wav")
+            prompt_wav_path = os.path.join(cur_dir, f"speakers/{speaker_id}_prompt.wav")
             (
                 prompt_code,
                 prompt_token,
@@ -322,18 +322,17 @@ class StepAudioTTS:
         thread = Thread(target=self.llm.generate, kwargs=generation_kwargs)
         thread.start()
 
-        with self.session_lm_generat_lock:
-            self.session_lm_generated_ids[session_id] = []
+        self.session_lm_generated_ids.set(session_id, [])
 
         batch_size = math.ceil(self.stream_factor * cosy_model.model.flow.input_frame_rate)
         for token_id in streamer:
             # print(token_id, end=",", flush=True)
             if token_id == 3:  # skip <|EOT|>, break
                 break
-            self.session_lm_generated_ids[session_id].append(token_id)
-            if len(self.session_lm_generated_ids[session_id]) % batch_size == 0:
+            self.session_lm_generated_ids.get(session_id).append(token_id)
+            if len(self.session_lm_generated_ids.get(session_id)) % batch_size == 0:
                 batch = (
-                    torch.tensor(self.session_lm_generated_ids[session_id])
+                    torch.tensor(self.session_lm_generated_ids.get(session_id))
                     .unsqueeze(0)
                     .to(cosy_model.model.device)
                     - 65536
@@ -348,12 +347,11 @@ class StepAudioTTS:
                     prompt_speaker_info["cosy_speech_embedding"].to(torch.bfloat16),
                 )
                 yield {"tts_speech": sub_tts_speech, "sample_rate": output_audio_sample_rate}
-                with self.session_lm_generat_lock:
-                    self.session_lm_generated_ids[session_id] = []
+                self.session_lm_generated_ids.set(session_id, [])
 
-        if len(self.session_lm_generated_ids[session_id]) > 0:
+        if len(self.session_lm_generated_ids.get(session_id)) > 0:
             batch = (
-                torch.tensor(self.session_lm_generated_ids[session_id])
+                torch.tensor(self.session_lm_generated_ids.get(session_id))
                 .unsqueeze(0)
                 .to(cosy_model.model.device)
                 - 65536
