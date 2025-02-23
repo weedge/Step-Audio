@@ -182,7 +182,7 @@ class MaskedDiffWithXvec(torch.nn.Module):
 
         # mask = (~make_pad_mask(torch.tensor([mel_len1 + mel_len2]))).to(h)
         mask = torch.ones([1, mel_len1 + mel_len2], device=h.device, dtype=torch.bfloat16)
-        feat = self.decoder(
+        feat, flow_cache = self.decoder(
             mu=h.transpose(1, 2).contiguous(),
             mask=mask.unsqueeze(1),
             spks=embedding,
