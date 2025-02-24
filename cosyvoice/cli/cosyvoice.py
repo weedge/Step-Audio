@@ -27,6 +27,7 @@ class CosyVoice:
     def __init__(
         self,
         model_dir,
+        token_overlap_len: int = 20,
     ):
         self.model_dir = model_dir
         with open("{}/cosyvoice.yaml".format(model_dir), "r") as f:
@@ -36,7 +37,11 @@ class CosyVoice:
             "{}/campplus.onnx".format(model_dir),
             "{}/speech_tokenizer_v1.onnx".format(model_dir),
         )
-        self.model = CosyVoiceModel(configs["flow"], configs["hift"])
+        self.model = CosyVoiceModel(
+            configs["flow"],
+            configs["hift"],
+            token_overlap_len=token_overlap_len,
+        )
         self.model.load(
             "{}/flow.pt".format(model_dir),
             "{}/hift.pt".format(model_dir),

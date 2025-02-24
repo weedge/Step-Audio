@@ -1,3 +1,4 @@
+import logging
 import math
 import os
 import re
@@ -42,15 +43,26 @@ class StepAudioTTS:
         encoder,
         device_map: str | dict | None = None,
         stream_factor: int = 2,
+        stream_scale_factor: float = 1.0,
         max_stream_factor: int = 2,
+        token_overlap_len: int = 20,
         **kwargs,
     ):
         # fast path to check params
+        # rtf and decoding related
         assert (
             stream_factor >= 2
         ), f"stream_factor must >=2 increase for better speech quality, but rtf slow (speech quality vs rtf)"
-        self.stream_factor = stream_factor  # >=2 increase for better speech quality, but rtf slow (speech quality vs rtf)
+        self.stream_factor = stream_factor
         self.token_max_hop_len = max_stream_factor * self.flow.input_frame_rate
+        assert (
+            stream_scale_factor >= 1.0
+        ), "stream_scale_factor should be greater than 1, change it according to your actual rtf"
+        self.stream_scale_factor = stream_scale_factor  # scale speed
+        assert (
+            token_overlap_len >= 0
+        ), "token_overlap_len should be greater than 0, change it according to your actual rtf"
+        self.token_overlap_len = token_overlap_len
 
         # session ctx dict with lock, maybe need a session class
         self.session_lm_generated_ids = ThreadSafeDict()  # session_id: ids(ptr)
@@ -91,8 +103,14 @@ class StepAudioTTS:
             **kwargs,
         )
         self.tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
-        self.common_cosy_model = CosyVoice(os.path.join(model_path, "CosyVoice-300M-25Hz"))
-        self.music_cosy_model = CosyVoice(os.path.join(model_path, "CosyVoice-300M-25Hz-Music"))
+        self.common_cosy_model = CosyVoice(
+            os.path.join(model_path, "CosyVoice-300M-25Hz"),
+            token_overlap_len=token_overlap_len,
+        )
+        self.music_cosy_model = CosyVoice(
+            os.path.join(model_path, "CosyVoice-300M-25Hz-Music"),
+            token_overlap_len=token_overlap_len,
+        )
         self.encoder = encoder
         self.sys_prompt_dict = {
             "sys_prompt_for_rap": "请参考对话历史里的音色，用RAP方式将文本内容大声说唱出来。",
@@ -293,7 +311,7 @@ class StepAudioTTS:
             - when max_stream_factor > stream_factor, dynamic batch size to gen waveform
             - when max_stream_factor <= stream_factor, static batch size to gen waveform
             - flow: audio vq tokens to mel
-            - hifi: mel to waveform
+            - hift: mel to waveform
         """
         prompt_speaker, prompt_speaker_info, cosy_model = self.preprocess_prompt(
             text, prompt_speaker, clone_dict=clone_dict
@@ -327,6 +345,7 @@ class StepAudioTTS:
         self.session_lm_generated_ids.set(session_id, [])
 
         batch_size = math.ceil(self.stream_factor * cosy_model.model.flow.input_frame_rate)
+        logging.info(f"init batch_size: {batch_size}")
         for token_id in streamer:
             # print(token_id, end=",", flush=True)
             if token_id == 3:  # skip <|EOT|>, break
@@ -360,6 +379,9 @@ class StepAudioTTS:
                 self.session_lm_generated_ids.set(
                     session_id, self.session_lm_generated_ids.get(session_id)[batch_size:]
                 )
+                # increase token_hop_len for better speech quality
+                batch_size = min(self.token_max_hop_len, int(batch_size * self.stream_scale_factor))
+                logging.info(f"increase batch_size: {batch_size}")
 
         if len(self.session_lm_generated_ids.get(session_id)) == 0:  # end to finalize
             self.session_lm_generated_ids.set(session_id, [65536])

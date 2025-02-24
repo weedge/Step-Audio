@@ -25,6 +25,7 @@ class CosyVoiceModel:
         self,
         flow: torch.nn.Module,
         hift: torch.nn.Module,
+        token_overlap_len: int = 20,
     ):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.flow = flow
@@ -35,11 +36,8 @@ class CosyVoiceModel:
         self.flow_cache_dict = ThreadSafeDict()
         self.hift_cache_dict = ThreadSafeDict()
 
-        self.token_overlap_len = 20
         # mel fade in out
-        self.mel_overlap_len = int(
-            self.token_overlap_len / self.flow.input_frame_rate * 22050 / 256
-        )
+        self.mel_overlap_len = int(token_overlap_len / self.flow.input_frame_rate * 22050 / 256)
         self.mel_window = np.hamming(2 * self.mel_overlap_len)
         # hift cache
         self.mel_cache_len = 20
