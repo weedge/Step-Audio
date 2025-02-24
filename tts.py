@@ -98,7 +98,7 @@ class StepAudioTTS:
         self.llm = AutoModelForCausalLM.from_pretrained(
             model_path,
             torch_dtype=torch.bfloat16,
-            device_map="cuda" if not device_map else device_map,
+            device_map="auto" if not device_map else device_map,
             trust_remote_code=True,
             **kwargs,
         )
