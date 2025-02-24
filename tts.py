@@ -54,7 +54,7 @@ class StepAudioTTS:
             stream_factor >= 2
         ), f"stream_factor must >=2 increase for better speech quality, but rtf slow (speech quality vs rtf)"
         self.stream_factor = stream_factor
-        self.token_max_hop_len = max_stream_factor * self.flow.input_frame_rate
+        self.max_stream_factor = max_stream_factor
         assert (
             stream_scale_factor >= 1.0
         ), "stream_scale_factor should be greater than 1, change it according to your actual rtf"
@@ -344,8 +344,9 @@ class StepAudioTTS:
 
         self.session_lm_generated_ids.set(session_id, [])
 
+        max_batch_size = math.ceil(self.max_stream_factor * cosy_model.model.flow.input_frame_rate)
         batch_size = math.ceil(self.stream_factor * cosy_model.model.flow.input_frame_rate)
-        logging.info(f"init batch_size: {batch_size}")
+        logging.info(f"init batch_size: {batch_size} max_batch_size: {max_batch_size}")
         for token_id in streamer:
             # print(token_id, end=",", flush=True)
             if token_id == 3:  # skip <|EOT|>, break
@@ -380,7 +381,7 @@ class StepAudioTTS:
                     session_id, self.session_lm_generated_ids.get(session_id)[batch_size:]
                 )
                 # increase token_hop_len for better speech quality
-                batch_size = min(self.token_max_hop_len, int(batch_size * self.stream_scale_factor))
+                batch_size = min(max_batch_size, int(batch_size * self.stream_scale_factor))
                 logging.info(f"increase batch_size: {batch_size}")
 
         if len(self.session_lm_generated_ids.get(session_id)) == 0:  # end to finalize
