@@ -36,7 +36,7 @@ def main():
     if args.synthesis_type == "tts":
         text = "（RAP）君不见黄河之水天上来，奔流到海不复回。君不见高堂明镜悲白发，朝如青丝暮成雪。人生得意须尽欢，莫使金樽空对月。天生我材必有用，千金散尽还复来。"
         text = os.getenv("TTS_TEXT", text)
-        batch_stream = tts_engine.static_batch_stream(text, "Tingting")
+        batch_stream = tts_engine.batch_stream(text, "Tingting")
         sub_tts_speechs = []
         sr = 22050
         for item in batch_stream:
@@ -52,7 +52,7 @@ def main():
         }
         text_clone = "万物之始,大道至简,衍化至繁。君不见黄河之水天上来，奔流到海不复回。君不见高堂明镜悲白发，朝如青丝暮成雪。人生得意须尽欢，莫使金樽空对月。天生我材必有用，千金散尽还复来。"
         text_clone = os.getenv("TTS_TEXT", text_clone)
-        batch_stream = tts_engine.static_batch_stream(text_clone, "", clone_speaker)
+        batch_stream = tts_engine.batch_stream(text_clone, "", clone_speaker)
         sub_tts_speechs = []
         sr = 22050
         for item in batch_stream:

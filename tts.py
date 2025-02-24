@@ -42,13 +42,15 @@ class StepAudioTTS:
         encoder,
         device_map: str | dict | None = None,
         stream_factor: int = 2,
+        max_stream_factor: int = 2,
         **kwargs,
     ):
         # fast path to check params
         assert (
             stream_factor >= 2
-        ), "stream_factor must >=2 increase for better speech quality, but rtf slow (speech quality vs rtf)"
+        ), f"stream_factor must >=2 increase for better speech quality, but rtf slow (speech quality vs rtf)"
         self.stream_factor = stream_factor  # >=2 increase for better speech quality, but rtf slow (speech quality vs rtf)
+        self.token_max_hop_len = max_stream_factor * self.flow.input_frame_rate
 
         # session ctx dict with lock, maybe need a session class
         self.session_lm_generated_ids = ThreadSafeDict()  # session_id: ids(ptr)
@@ -278,7 +280,7 @@ class StepAudioTTS:
         return prompt_speaker, prompt_speaker_info, cosy_model
 
     @torch.inference_mode()
-    def static_batch_stream(
+    def batch_stream(
         self,
         text: str,
         prompt_speaker: str,
@@ -287,7 +289,9 @@ class StepAudioTTS:
     ):
         """
         - step1 lm stream generate token
-        - static batch size to gen waveform
+        - batch size to gen waveform
+            - when max_stream_factor > stream_factor, dynamic batch size to gen waveform
+            - when max_stream_factor <= stream_factor, static batch size to gen waveform
             - flow: audio vq tokens to mel
             - hifi: mel to waveform
         """
@@ -328,9 +332,17 @@ class StepAudioTTS:
             if token_id == 3:  # skip <|EOT|>, break
                 break
             self.session_lm_generated_ids.get(session_id).append(token_id)
-            if len(self.session_lm_generated_ids.get(session_id)) % batch_size == 0:
+            # if len(self.session_lm_generated_ids.get(session_id)) % batch_size == 0:
+            if (
+                len(self.session_lm_generated_ids.get(session_id))
+                >= batch_size + self.token_overlap_len
+            ):
                 batch = (
-                    torch.tensor(self.session_lm_generated_ids.get(session_id))
+                    torch.tensor(
+                        self.session_lm_generated_ids.get(session_id)[
+                            : batch_size + self.token_overlap_len
+                        ]
+                    )
                     .unsqueeze(0)
                     .to(cosy_model.model.device)
                     - 65536
@@ -345,9 +357,11 @@ class StepAudioTTS:
                     finalize=False,
                 )
                 yield {"tts_speech": sub_tts_speech, "sample_rate": output_audio_sample_rate}
-                self.session_lm_generated_ids.set(session_id, [])
+                self.session_lm_generated_ids.set(
+                    session_id, self.session_lm_generated_ids.get(session_id)[batch_size:]
+                )
 
-        if len(self.session_lm_generated_ids.get(session_id)) == 0: # end to finalize
+        if len(self.session_lm_generated_ids.get(session_id)) == 0:  # end to finalize
             self.session_lm_generated_ids.set(session_id, [65536])
 
         batch = (
