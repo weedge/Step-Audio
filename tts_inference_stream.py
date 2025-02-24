@@ -24,9 +24,6 @@ def main():
         "--stream-factor", type=int, default=2, help="Synthesis audios stream factor"
     )
     parser.add_argument(
-        "--max-stream-factor", type=int, default=2, help="Synthesis audios max stream factor"
-    )
-    parser.add_argument(
         "--stream-scale-factor", type=float, default=1.0, help="Synthesis audios stream scale factor"
     )
     parser.add_argument(
