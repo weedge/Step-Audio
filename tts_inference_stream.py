@@ -23,6 +23,18 @@ def main():
     parser.add_argument(
         "--stream-factor", type=int, default=2, help="Synthesis audios stream factor"
     )
+    parser.add_argument(
+        "--max-stream-factor", type=int, default=2, help="Synthesis audios max stream factor"
+    )
+    parser.add_argument(
+        "--stream-scale-factor", type=float, default=1.0, help="Synthesis audios stream scale factor"
+    )
+    parser.add_argument(
+        "--max-stream-factor", type=int, default=2, help="Synthesis audios max stream factor"
+    )
+    parser.add_argument(
+        "--token-overlap-len", type=int, default=20, help="Synthesis audios token overlap len"
+    )
     args = parser.parse_args()
     os.makedirs(f"{args.output_path}", exist_ok=True)
 
@@ -31,6 +43,9 @@ def main():
         f"{args.model_path}/Step-Audio-TTS-3B",
         encoder,
         stream_factor=args.stream_factor,
+        stream_scale_factor=args.stream_scale_factor,
+        max_stream_factor=args.max_stream_factor,
+        token_overlap_len=args.token_overlap_len,
     )
 
     if args.synthesis_type == "tts":
