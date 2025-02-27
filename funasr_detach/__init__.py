@@ -1,13 +1,16 @@
 """Initialize funasr package."""
 
+import logging
 import os
 import pkgutil
 import importlib
 
-dirname = os.path.dirname(__file__)
-version_file = os.path.join(dirname, "version.txt")
-with open(version_file, "r") as f:
-    __version__ = f.read().strip()
+try:
+    import version
+    __version__ = version.__version__
+except FileNotFoundError:
+    __version__ = "1.0.8"
+    logging.warning(f"version.py not found, set __version__ to {__version__}")
 
 
 import importlib
