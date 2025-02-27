@@ -6,11 +6,11 @@ import pkgutil
 import importlib
 
 try:
-    import version
+    from funasr_detach import version
     __version__ = version.__version__
-except FileNotFoundError:
+except Exception as e:
     __version__ = "1.0.8"
-    logging.warning(f"version.py not found, set __version__ to {__version__}")
+    logging.warning(f"set __version__ to {__version__} because {e}")
 
 
 import importlib
